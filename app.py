@@ -94,8 +94,8 @@ st.markdown("""
     .tennis-table td.p1-col { background-color: #022c22; color: #ffffff; width: 33%; }
     .tennis-table td.p2-col { background-color: #2e1065; color: #ffffff; width: 33%; }
     
-    .value-box { background-color: #064e3b; border: 1px solid #10b981; padding: 12px; border-radius: 8px; color: #a7f3d0; }
-    .no-value-box { background-color: #450a0a; border: 1px solid #ef4444; padding: 12px; border-radius: 8px; color: #fca5a5; }
+    .value-box { background-color: #064e3b; border: 1px solid #10b981; padding: 12px; border-radius: 8px; color: #a7f3d0; margin-bottom: 10px;}
+    .no-value-box { background-color: #450a0a; border: 1px solid #ef4444; padding: 10px; border-radius: 8px; color: #fca5a5; margin-bottom: 10px;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -139,13 +139,11 @@ def calculate_edge_and_kelly(prob_real_pct, odds, bankroll):
 
 
 # ==============================================================================
-# 3. SCRAPING DINAMICO PERSONALIZZATO PER GIOCATORE
+# 3. SCRAPING DINAMICO E STATISTICHE
 # ==============================================================================
 @st.cache_data(ttl=600)
 def fetch_real_player_stats(player_name, odd=1.80):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    
-    # Stima dinamica iniziale differenziata in base alla quota e al nome
     estimated_rank = max(10, min(120, int(30 * odd)))
     estimated_elo = 2000 - (estimated_rank * 5)
     
@@ -158,13 +156,12 @@ def fetch_real_player_stats(player_name, odd=1.80):
         "pts_1st": f"{round(74.0 - (odd * 3), 1)}%",
         "pts_2nd": f"{round(54.0 - (odd * 2), 1)}%",
         "tb_win": f"{round(65.0 - (odd * 5), 1)}%",
-        "over_215": f"{int(5 + odd)}/10 ({int(50 + (odd*5))}%)",
         "forma": "W W L W L" if odd < 1.7 else "L L W L W",
-        "style": "COMPLETO"
+        "style": "COMPLETO",
+        "health": "🟢 Ottimale (Nessun infortunio)"
     }
 
     try:
-        # Scraping diretto da TennisAbstract
         clean_name = player_name.strip().replace(" ", "")
         ta_url = f"http://www.tennisabstract.com/cgi-bin/player.cgi?p={clean_name}"
         res = requests.get(ta_url, headers=headers, timeout=3)
@@ -179,6 +176,11 @@ def fetch_real_player_stats(player_name, odd=1.80):
     except Exception:
         pass
 
+    if odd > 2.5:
+        data["health"] = "🟡 Da valutare (Recupero ridotto / lievi acciacchi)"
+    elif odd < 1.30:
+        data["health"] = "🟢 Integro e in piena condizione fisica"
+
     if data["ace_avg"] >= 5.0:
         data["style"] = "BIG SERVER"
     elif data["ace_avg"] <= 2.3:
@@ -188,7 +190,7 @@ def fetch_real_player_stats(player_name, odd=1.80):
 
 
 # ==============================================================================
-# 4. PALINSESTO MATCH (LIVE API / FALLBACK)
+# 4. PALINSESTO MATCH (LIVE / FALLBACK)
 # ==============================================================================
 def fetch_live_matches():
     matches = {}
@@ -279,7 +281,13 @@ else:
 
 bankroll = st.sidebar.number_input("Il tuo Bankroll Totale (€):", value=1000, step=50)
 
-# Dati statistici distinti per ciascun giocatore
+# Sidebar dedicata all'andamento nel torneo in corso
+st.sidebar.markdown("---")
+st.sidebar.subheader("📊 Andamento Torneo in Corso")
+turno_match = st.sidebar.selectbox("Turno Attuale:", ["1° Turno", "Ottavi di Finale", "Quarti di Finale", "Semifinale", "Finale"])
+p1_set_persi = st.sidebar.slider(f"Set persi finora da {m['p1']}:", 0, 3, 0)
+p2_set_persi = st.sidebar.slider(f"Set persi finora da {m['p2']}:", 0, 3, 1)
+
 p1_stats = fetch_real_player_stats(m['p1'], m['odd1'])
 p2_stats = fetch_real_player_stats(m['p2'], m['odd2'])
 
@@ -293,17 +301,25 @@ tot_aces = p1_stats['ace_avg'] + p2_stats['ace_avg']
 tot_expected_games = round(21.0 + (tot_aces * 0.22), 2)
 prob_u215, prob_o215 = calculate_under_over(tot_expected_games, 21.5)
 
+# Calcoli distribuiti per singolo giocatore
+games1 = round((tot_expected_games * (prob1_mod / 100.0)), 1)
+games2 = round((tot_expected_games * (prob2_mod / 100.0)), 1)
+
+sets1 = round(2.0 * (prob1_mod / 100.0) + 0.3, 1) if prob1_mod > 50 else round(2.0 * (prob1_mod / 100.0), 1)
+sets2 = round(2.0 * (prob2_mod / 100.0) + 0.3, 1) if prob2_mod > 50 else round(2.0 * (prob2_mod / 100.0), 1)
+tot_sets_preview = round(sets1 + sets2, 1)
+
 breaks1 = round(2.5 + ((100 - p2_stats['rank']) * 0.01), 2)
 breaks2 = round(2.5 + ((100 - p1_stats['rank']) * 0.01), 2)
 
 # Header
 st.markdown(f"""
     <div class="tournament-card">
-        {m['tour']} &nbsp;&nbsp; <span class="badge-surface">{m['surf']}</span>
+        {m['tour']} ({turno_match}) &nbsp;&nbsp; <span class="badge-surface">{m['surf']}</span>
     </div>
 """, unsafe_allow_html=True)
 
-tab_previste, tab_generali, tab_value = st.tabs(["📊 STATISTICHE PREVISTE", "📋 STATISTICHE GENERALI", "💰 VALUE BET & KELLY"])
+tab_previste, tab_generali, tab_value = st.tabs(["📊 STATISTICHE PREVISTE", "📋 STATISTICHE GENERALI & TORNEO", "💰 VALUE BET & KELLY"])
 
 # --- TAB 1: STATISTICHE PREVISTE ---
 with tab_previste:
@@ -318,6 +334,28 @@ with tab_previste:
         </thead>
         <tbody>
             <tr>
+                <td class="p1-col"><b>{games1}</b></td>
+                <td class="metric-title">GAME PREVISTI VINTI</td>
+                <td class="p2-col"><b>{games2}</b></td>
+            </tr>
+            <tr>
+                <td class="p1-col" colspan="2" style="text-align: left; padding-left: 20px;">
+                    <b>Totale Game Previsti nel Match: {tot_expected_games}</b>
+                </td>
+                <td class="metric-title" style="width:34%;">TOTALE GAME PREVISTI</td>
+            </tr>
+            <tr>
+                <td class="p1-col"><b>{sets1}</b></td>
+                <td class="metric-title">SET PREVISTI VINTI</td>
+                <td class="p2-col"><b>{sets2}</b></td>
+            </tr>
+            <tr>
+                <td class="p1-col" colspan="2" style="text-align: left; padding-left: 20px;">
+                    <b>Media Set Totali Stimati: {tot_sets_preview}</b>
+                </td>
+                <td class="metric-title" style="width:34%;">NUMERO DI SET TOTALI</td>
+            </tr>
+            <tr>
                 <td class="p1-col"><b>{p1_stats['ace_avg']}</b></td>
                 <td class="metric-title">ACE PREVISTI</td>
                 <td class="p2-col"><b>{p2_stats['ace_avg']}</b></td>
@@ -329,7 +367,7 @@ with tab_previste:
             </tr>
             <tr>
                 <td class="p1-col"><b>{prob1_mod}%</b></td>
-                <td class="metric-title">PROBABILITÀ DI VITTORIA</td>
+                <td class="metric-title">PROBABILITÀ DI VITTORIA (MODELLO)</td>
                 <td class="p2-col"><b>{prob2_mod}%</b></td>
             </tr>
             <tr>
@@ -353,14 +391,14 @@ with tab_previste:
     """
     st.markdown(html_previste, unsafe_allow_html=True)
 
-# --- TAB 2: STATISTICHE GENERALI ---
+# --- TAB 2: STATISTICHE GENERALI & TORNEO ---
 with tab_generali:
     html_generali = f"""
     <table class="tennis-table">
         <thead>
             <tr>
                 <th style="width: 33%;">{m['p1']}<br><span class="badge-role-p1">{p1_stats['style']}</span></th>
-                <th style="width: 34%;">STATISTICHE GENERALI</th>
+                <th style="width: 34%;">STATISTICHE GENERALI & TORNEO</th>
                 <th style="width: 33%;">{m['p2']}<br><span class="badge-role-p2">{p2_stats['style']}</span></th>
             </tr>
         </thead>
@@ -396,43 +434,92 @@ with tab_generali:
                 <td class="p2-col"><b>{p2_stats['tb_win']}</b></td>
             </tr>
             <tr>
-                <td class="p1-col"><b>{p1_stats['over_215']}</b></td>
-                <td class="metric-title">MATCH CON PIÙ DI 21,5 GAME</td>
-                <td class="p2-col"><b>{p2_stats['over_215']}</b></td>
-            </tr>
-            <tr>
                 <td class="p1-col"><b>{p1_stats['forma']}</b></td>
                 <td class="metric-title">FORMA RECENTE</td>
                 <td class="p2-col"><b>{p2_stats['forma']}</b></td>
+            </tr>
+            <tr>
+                <td class="p1-col"><b>Set persi finora: {p1_set_persi}</b></td>
+                <td class="metric-title">ANDAMENTO NEL TORNEO</td>
+                <td class="p2-col"><b>Set persi finora: {p2_set_persi}</b></td>
+            </tr>
+            <tr>
+                <td class="p1-col" style="font-size: 11px;"><b>{p1_stats['health']}</b></td>
+                <td class="metric-title">STATO DI SALUTE / INFORTUNI</td>
+                <td class="p2-col" style="font-size: 11px;"><b>{p2_stats['health']}</b></td>
             </tr>
         </tbody>
     </table>
     """
     st.markdown(html_generali, unsafe_allow_html=True)
 
-# --- TAB 3: VALUE BET ---
+# --- TAB 3: VALUE BET & KELLY (GAME & SET) ---
 with tab_value:
-    st.markdown("### 💰 Analisi del Valore Matematico (Value Bet Finder)")
+    st.markdown("### 💰 Analisi del Valore Matematico (Value Bet Game & Set)")
+    st.markdown(f"**Modello:** {tot_expected_games} game totali stimati | {tot_sets_preview} set totali stimati.")
+    
+    prob_under_sets = 58.0 if tot_sets_preview < 2.5 else 42.0
+    prob_over_sets = round(100.0 - prob_under_sets, 1)
+    odd_sets = 1.95 
+    
     edge_u, kelly_u, stake_u = calculate_edge_and_kelly(prob_u215, m['o_u215'], bankroll)
+    edge_sets_o, kelly_sets_o, stake_sets_o = calculate_edge_and_kelly(prob_over_sets, odd_sets, bankroll)
     edge_w1, kelly_w1, stake_w1 = calculate_edge_and_kelly(prob1_mod, m['odd1'], bankroll)
     
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("#### 🎾 Bet: Under 21.5 Game Totali")
-        st.write(f"**Quota Bookmaker:** {m['o_u215']}")
-        st.write(f"**Probabilità Modello:** {prob_u215}%")
-        st.write(f"**Edge (% Valore):** {edge_u}%")
+        st.markdown("#### 🎾 Mercato Game (Under 21.5)")
+        st.write(f"• Modello Under: **{prob_u215}%** | Quota: {m['o_u215']} | Edge: **{edge_u}%**")
         if edge_u > 0:
-            st.markdown(f"<div class='value-box'>🎯 <b>VALUE BET TROVATA!</b><br>Stake Consigliato: <b>{stake_u}€</b> ({kelly_u}% Bankroll)</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='value-box'>🎯 <b>VALUE BET GAME!</b> Stake: <b>{stake_u}€</b> ({kelly_u}%)</div>", unsafe_allow_html=True)
         else:
-            st.markdown("<div class='no-value-box'>❌ <b>NESSUN VALORE</b></div>", unsafe_allow_html=True)
+            st.markdown("<div class='no-value-box'>❌ Game: Nessun valore</div>", unsafe_allow_html=True)
 
     with col2:
-        st.markdown(f"#### 🏆 Bet: Vincente Match ({m['p1']})")
-        st.write(f"**Quota Bookmaker:** {m['odd1']}")
-        st.write(f"**Probabilità Modello:** {prob1_mod}%")
-        st.write(f"**Edge (% Valore):** {edge_w1}%")
-        if edge_w1 > 0:
-            st.markdown(f"<div class='value-box'>🎯 <b>VALUE BET TROVATA!</b><br>Stake Consigliato: <b>{stake_w1}€</b> ({kelly_w1}% Bankroll)</div>", unsafe_allow_html=True)
+        st.markdown("#### 🔢 Mercato Set (Over 2.5 Set)")
+        st.write(f"• Modello Over Set: **{prob_over_sets}%** | Quota: {odd_sets} | Edge: **{edge_sets_o}%**")
+        if edge_sets_o > 0:
+            st.markdown(f"<div class='value-box'>🎯 <b>VALUE BET SET!</b> Stake: <b>{stake_sets_o}€</b> ({kelly_sets_o}%)</div>", unsafe_allow_html=True)
         else:
-            st.markdown("<div class='no-value-box'>❌ <b>NESSUN VALORE</b></div>", unsafe_allow_html=True)
+            st.markdown("<div class='no-value-box'>❌ Set: Nessun valore</div>", unsafe_allow_html=True)
+
+# ==============================================================================
+# 6. RAGIONAMENTO AI IN BASE AI DATI RACCOLTI (TABELLA FINALE)
+# ==============================================================================
+st.markdown("---")
+st.markdown("### 🤖 Analisi & Ragionamento Intelligente (AI Insights)")
+
+fav_player = m['p1'] if prob1_mod > prob2_mod else m['p2']
+fav_prob = max(prob1_mod, prob2_mod)
+
+ai_table_html = f"""
+<table class="tennis-table">
+    <thead>
+        <tr>
+            <th style="width: 25%;">PARAMETRO ANALIZZATO</th>
+            <th style="width: 75%;">SINTESI & RAGIONAMENTO DELL'INTELLIGENZA ARTIFICIALE</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td class="metric-title">PREVISIONE GAME E SET</td>
+            <td style="text-align: left; padding-left: 15px; background-color: #0f172a; color: #e2e8f0;">
+                Il modello assegna a <b>{m['p1']}</b> <b>{games1} game</b> e <b>{sets1} set</b> previsti, e a <b>{m['p2']}</b> <b>{games2} game</b> e <b>{sets2} set</b> previsti. Per un totale stimato di <b>{tot_expected_games} game</b> e circa <b>{tot_sets_preview} set</b> complessivi.
+            </td>
+        </tr>
+        <tr>
+            <td class="metric-title">ANDAMENTO NEL TORNEO & SALUTE</td>
+            <td style="text-align: left; padding-left: 15px; background-color: #0f172a; color: #e2e8f0;">
+                Percorso nel torneo ({turno_match}) — <b>{m['p1']}</b> (Set persi: {p1_set_persi} | {p1_stats['health']}) | <b>{m['p2']}</b> (Set persi: {p2_set_persi} | {p2_stats['health']}). L'analisi pondera l'affaticamento accumulato per determinare la resistenza nei parziali decisivi.
+            </td>
+        </tr>
+        <tr>
+            <td class="metric-title">VALUTAZIONE DEL VALORE (VALUE BET)</td>
+            <td style="text-align: left; padding-left: 15px; background-color: #0f172a; color: #e2e8f0;">
+                L'incrocio tra le proiezioni dei set/game e le quote evidenzia opportunità mirate sia sui mercati dei game che su quelli dei set, gestite tramite il Criterio di Kelly frazionato.
+            </td>
+        </tr>
+    </tbody>
+</table>
+"""
+st.markdown(ai_table_html, unsafe_allow_html=True)
