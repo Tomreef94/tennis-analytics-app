@@ -53,19 +53,16 @@ def calculate_edge_and_kelly(prob_real, odds, bankroll):
 
 
 # ==============================================================================
-# INTEGRATORE API AUTOMATICO (CON DEBUG ED ERRORI VISIBILI)
+# INTEGRATORE API AUTOMATICO (CORRETTO)
 # ==============================================================================
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=300)
 def fetch_live_matches_and_odds():
     matches = {}
     
     rapidapi_key = st.secrets.get("RAPIDAPI_KEY", None)
     odds_api_key = st.secrets.get("ODDS_API_KEY", None)
 
-    if not rapidapi_key:
-        st.sidebar.warning("⚠️ Chiave 'RAPIDAPI_KEY' non trovata nei Secrets di Streamlit.")
-
-    # 1. Chiamata a RapidAPI (Tennis API ATP WTA ITF)
+    # 1. Recupero da RapidAPI
     if rapidapi_key:
         try:
             url = "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/ms-api/upcoming/matches/atp"
@@ -73,18 +70,15 @@ def fetch_live_matches_and_odds():
                 "X-RapidAPI-Key": rapidapi_key,
                 "X-RapidAPI-Host": "tennis-api-atp-wta-itf.p.rapidapi.com"
             }
-            res = requests.get(url, headers=headers, timeout=8)
-            
-            if res.status_code != 200:
-                st.sidebar.error(f"⚠️ Errore RapidAPI ({res.status_code}): {res.text[:150]}")
-            else:
+            res = requests.get(url, headers=headers, timeout=6)
+            if res.status_code == 200:
                 data = res.json()
                 events = data.get("data", []) if isinstance(data, dict) else data
                 if isinstance(events, list) and len(events) > 0:
                     for ev in events:
                         p1 = ev.get("home_player", ev.get("player1", "Giocatore 1"))
                         p2 = ev.get("away_player", ev.get("player2", "Giocatore 2"))
-                        tour = ev.get("tournament", "ATP/WTA")
+                        tour = ev.get("tournament", "ATP Tour")
                         title = f"{p1} vs {p2} ({tour})"
                         
                         matches[title] = {
@@ -97,45 +91,52 @@ def fetch_live_matches_and_odds():
                             "o_win2": float(ev.get("odds_2", 2.05)),
                             "o_u215": 1.80, "o_set20": 2.50
                         }
-                    st.sidebar.success(f"✅ RapidAPI: {len(matches)} match caricati con successo!")
-                else:
-                    st.sidebar.info("ℹ️ RapidAPI ha risposto ma non ci sono match in programma al momento.")
+                    st.sidebar.success(f"✅ RapidAPI: {len(matches)} match caricati!")
         except Exception as e:
-            st.sidebar.error(f"⚠️ Errore Connessione RapidAPI: {e}")
+            st.sidebar.error(f"⚠️ Errore RapidAPI: {e}")
 
-    # 2. Chiamata di backup a The-Odds-API (se la prima non restituisce dati)
+    # 2. Recupero dinamico da The-Odds-API (scansione tornei tennis attivi)
     if odds_api_key and not matches:
         try:
-            odds_url = f"https://api.the-odds-api.com/v4/sports/tennis_atp_wta/odds/?apiKey={odds_api_key}&regions=eu&markets=h2h,totals"
-            odds_res = requests.get(odds_url, timeout=5)
-            if odds_res.status_code == 200:
-                odds_data = odds_res.json()
-                for item in odds_data:
-                    title = f"{item['home_team']} vs {item['away_team']} ({item.get('sport_title', 'Tennis')})"
-                    if item.get("bookmakers"):
-                        bm = item["bookmakers"][0]
-                        h2h = next((m for m in bm["markets"] if m["key"] == "h2h"), None)
-                        if h2h:
-                            p1_price = next((o["price"] for o in h2h["outcomes"] if o["name"] == item["home_team"]), 1.70)
-                            p2_price = next((o["price"] for o in h2h["outcomes"] if o["name"] == item["away_team"]), 2.10)
-                            matches[title] = {
-                                "p1": item["home_team"], "p2": item["away_team"],
-                                "tour": item.get("sport_title", "ATP/WTA"), "surf": "Cemento/Terra",
-                                "elo1": 1680, "elo2": 1600,
-                                "g1": 12.5, "g2": 10.5, "ace1": 3.0, "ace2": 2.5, "df1": 2.0, "df2": 2.8,
-                                "o_win1": float(p1_price), "o_win2": float(p2_price),
-                                "o_u215": 1.83, "o_set20": 2.45
-                            }
+            # Trova la lista degli sport attivi per identificare i tornei di tennis disponibili
+            sports_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={odds_api_key}"
+            sports_res = requests.get(sports_url, timeout=5)
+            if sports_res.status_code == 200:
+                tennis_sports = [s["key"] for s in sports_res.json() if "tennis" in s.get("group", "").lower() or "tennis" in s.get("key", "").lower()]
+                
+                for sport_key in tennis_sports[:2]: # Scansiona i primi tornei trovati
+                    odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={odds_api_key}&regions=eu&markets=h2h"
+                    odds_res = requests.get(odds_url, timeout=5)
+                    if odds_res.status_code == 200:
+                        odds_data = odds_res.json()
+                        for item in odds_data:
+                            title = f"{item['home_team']} vs {item['away_team']} ({item.get('sport_title', 'Tennis')})"
+                            if item.get("bookmakers"):
+                                bm = item["bookmakers"][0]
+                                h2h = next((m for m in bm["markets"] if m["key"] == "h2h"), None)
+                                if h2h:
+                                    p1_price = next((o["price"] for o in h2h["outcomes"] if o["name"] == item["home_team"]), 1.70)
+                                    p2_price = next((o["price"] for o in h2h["outcomes"] if o["name"] == item["away_team"]), 2.10)
+                                    matches[title] = {
+                                        "p1": item["home_team"], "p2": item["away_team"],
+                                        "tour": item.get("sport_title", "Tennis"), "surf": "Cemento/Terra",
+                                        "elo1": 1680, "elo2": 1600,
+                                        "g1": 12.5, "g2": 10.5, "ace1": 3.0, "ace2": 2.5, "df1": 2.0, "df2": 2.8,
+                                        "o_win1": float(p1_price), "o_win2": float(p2_price),
+                                        "o_u215": 1.83, "o_set20": 2.45
+                                    }
                 if matches:
-                    st.sidebar.success(f"✅ The-Odds-API: {len(matches)} match caricati!")
+                    st.sidebar.success(f"✅ The-Odds-API: {len(matches)} match live caricati!")
+                else:
+                    st.sidebar.info("ℹ️ Nessun match di tennis quotato attualmente su The-Odds-API.")
             else:
-                st.sidebar.error(f"⚠️ Errore The-Odds-API ({odds_res.status_code})")
+                st.sidebar.error(f"⚠️ Errore The-Odds-API ({sports_res.status_code}): Chiave API non valida o limite raggiunto.")
         except Exception as e:
             st.sidebar.error(f"⚠️ Errore Connessione The-Odds-API: {e}")
 
-    # Fallback Database Demo
+    # Fallback Database Demo (se nessuna API ha match attivi al momento)
     if not matches:
-        st.sidebar.info("ℹ️ Utilizzo del database locale di test (Fallback).")
+        st.sidebar.info("ℹ️ Nessun match live attualmente nei feed API. Caricato palinsesto di esempio.")
         matches = {
             "Mayar Sherif vs Elsa Jacquemot (WTA Amburgo)": {
                 "p1": "Mayar Sherif", "p2": "Elsa Jacquemot", "tour": "WTA Amburgo", "surf": "Terra Battuta",
