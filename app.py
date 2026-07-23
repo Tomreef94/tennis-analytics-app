@@ -53,18 +53,19 @@ def calculate_edge_and_kelly(prob_real, odds, bankroll):
 
 
 # ==============================================================================
-# INTEGRATORE API AUTOMATICO (FEED DI OGGI / LIVE)
+# INTEGRATORE API AUTOMATICO (MULTI-ROTA)
 # ==============================================================================
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def fetch_live_matches_and_odds():
     matches = {}
     
     rapidapi_key = st.secrets.get("RAPIDAPI_KEY", None)
     odds_api_key = st.secrets.get("ODDS_API_KEY", None)
 
-    # 1. Prova endpoint RapidAPI per tutti i match di oggi/live
+    # 1. Scansione estesa su RapidAPI
     if rapidapi_key:
         endpoints = [
+            "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/ms-api/upcoming/match-prediction/atp",
             "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/ms-api/upcoming/matches/atp",
             "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/ms-api/upcoming/matches/wta",
             "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/ms-api/live/matches"
@@ -76,34 +77,40 @@ def fetch_live_matches_and_odds():
         
         for url in endpoints:
             try:
-                res = requests.get(url, headers=headers, timeout=4)
+                res = requests.get(url, headers=headers, timeout=5)
                 if res.status_code == 200:
                     data = res.json()
-                    events = data.get("data", []) if isinstance(data, dict) else data
-                    if isinstance(events, list):
+                    events = []
+                    if isinstance(data, dict):
+                        events = data.get("data", data.get("matches", data.get("events", [])))
+                    elif isinstance(data, list):
+                        events = data
+                        
+                    if isinstance(events, list) and len(events) > 0:
                         for ev in events:
-                            p1 = ev.get("home_player", ev.get("player1", "Giocatore 1"))
-                            p2 = ev.get("away_player", ev.get("player2", "Giocatore 2"))
-                            tour = ev.get("tournament", "ATP/WTA")
-                            title = f"{p1} vs {p2} ({tour})"
-                            
-                            matches[title] = {
-                                "p1": p1, "p2": p2, "tour": tour, "surf": ev.get("surface", "Hard"),
-                                "elo1": 1650, "elo2": 1600,
-                                "g1": 12.0, "g2": 10.5,
-                                "ace1": 3.0, "ace2": 2.5,
-                                "df1": 2.0, "df2": 2.5,
-                                "o_win1": float(ev.get("odds_1", 1.75)),
-                                "o_win2": float(ev.get("odds_2", 2.05)),
-                                "o_u215": 1.80, "o_set20": 2.50
-                            }
+                            if isinstance(ev, dict):
+                                p1 = ev.get("home_player", ev.get("player1", ev.get("player_1", "Giocatore 1")))
+                                p2 = ev.get("away_player", ev.get("player2", ev.get("player_2", "Giocatore 2")))
+                                tour = ev.get("tournament", ev.get("tournament_name", "Tennis Tour"))
+                                title = f"{p1} vs {p2} ({tour})"
+                                
+                                matches[title] = {
+                                    "p1": str(p1), "p2": str(p2), "tour": str(tour), "surf": ev.get("surface", "Hard"),
+                                    "elo1": 1650, "elo2": 1600,
+                                    "g1": 12.0, "g2": 10.5,
+                                    "ace1": 3.0, "ace2": 2.5,
+                                    "df1": 2.0, "df2": 2.5,
+                                    "o_win1": float(ev.get("odds_1", ev.get("home_odds", 1.75))),
+                                    "o_win2": float(ev.get("odds_2", ev.get("away_odds", 2.05))),
+                                    "o_u215": 1.80, "o_set20": 2.50
+                                }
             except Exception:
                 pass
         
         if matches:
-            st.sidebar.success(f"✅ RapidAPI: {len(matches)} match live caricati!")
+            st.sidebar.success(f"✅ RapidAPI: Trovati {len(matches)} match reali!")
 
-    # 2. Se RapidAPI è vuoto, prova The-Odds-API su tutti i tornei attivi
+    # 2. Scansione dinamica su The-Odds-API (se RapidAPI è vuoto)
     if odds_api_key and not matches:
         try:
             sports_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={odds_api_key}"
@@ -133,13 +140,13 @@ def fetch_live_matches_and_odds():
                                         "o_u215": 1.83, "o_set20": 2.45
                                     }
                 if matches:
-                    st.sidebar.success(f"✅ The-Odds-API: {len(matches)} match caricati!")
+                    st.sidebar.success(f"✅ The-Odds-API: Trovati {len(matches)} match!")
         except Exception:
             pass
 
-    # Fallback Database Demo
+    # 3. Fallback Demo se nessuna API ha restituito eventi attivi
     if not matches:
-        st.sidebar.info("ℹ️ Nessun match live nei feed API in questo momento. Caricato palinsesto demo.")
+        st.sidebar.info("ℹ️ Feed API temporaneamente vuoto. Caricato palinsesto demo.")
         matches = {
             "Mayar Sherif vs Elsa Jacquemot (WTA Amburgo)": {
                 "p1": "Mayar Sherif", "p2": "Elsa Jacquemot", "tour": "WTA Amburgo", "surf": "Terra Battuta",
