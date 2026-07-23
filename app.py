@@ -53,7 +53,7 @@ def calculate_edge_and_kelly(prob_real, odds, bankroll):
 
 
 # ==============================================================================
-# INTEGRATORE API AUTOMATICO (MULTI-ENDPOINT)
+# INTEGRATORE API AUTOMATICO (FEED DI OGGI / LIVE)
 # ==============================================================================
 @st.cache_data(ttl=300)
 def fetch_live_matches_and_odds():
@@ -62,11 +62,12 @@ def fetch_live_matches_and_odds():
     rapidapi_key = st.secrets.get("RAPIDAPI_KEY", None)
     odds_api_key = st.secrets.get("ODDS_API_KEY", None)
 
-    # 1. Chiamata a RapidAPI (Prova 2 endpoint per garantire di trovare sempre match)
+    # 1. Prova endpoint RapidAPI per tutti i match di oggi/live
     if rapidapi_key:
         endpoints = [
             "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/ms-api/upcoming/matches/atp",
-            "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/ms-api/upcoming/matches/wta"
+            "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/ms-api/upcoming/matches/wta",
+            "https://tennis-api-atp-wta-itf.p.rapidapi.com/tennis/v2/ms-api/live/matches"
         ]
         headers = {
             "X-RapidAPI-Key": rapidapi_key,
@@ -75,7 +76,7 @@ def fetch_live_matches_and_odds():
         
         for url in endpoints:
             try:
-                res = requests.get(url, headers=headers, timeout=5)
+                res = requests.get(url, headers=headers, timeout=4)
                 if res.status_code == 200:
                     data = res.json()
                     events = data.get("data", []) if isinstance(data, dict) else data
@@ -100,19 +101,19 @@ def fetch_live_matches_and_odds():
                 pass
         
         if matches:
-            st.sidebar.success(f"✅ RapidAPI: Caricati {len(matches)} match attivi!")
+            st.sidebar.success(f"✅ RapidAPI: {len(matches)} match live caricati!")
 
-    # 2. Recupero da The-Odds-API
+    # 2. Se RapidAPI è vuoto, prova The-Odds-API su tutti i tornei attivi
     if odds_api_key and not matches:
         try:
             sports_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={odds_api_key}"
-            sports_res = requests.get(sports_url, timeout=5)
+            sports_res = requests.get(sports_url, timeout=4)
             if sports_res.status_code == 200:
                 tennis_sports = [s["key"] for s in sports_res.json() if "tennis" in s.get("group", "").lower() or "tennis" in s.get("key", "").lower()]
                 
                 for sport_key in tennis_sports:
                     odds_url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/?apiKey={odds_api_key}&regions=eu&markets=h2h"
-                    odds_res = requests.get(odds_url, timeout=5)
+                    odds_res = requests.get(odds_url, timeout=4)
                     if odds_res.status_code == 200:
                         odds_data = odds_res.json()
                         for item in odds_data:
@@ -132,7 +133,7 @@ def fetch_live_matches_and_odds():
                                         "o_u215": 1.83, "o_set20": 2.45
                                     }
                 if matches:
-                    st.sidebar.success(f"✅ The-Odds-API: Caricati {len(matches)} match attivi!")
+                    st.sidebar.success(f"✅ The-Odds-API: {len(matches)} match caricati!")
         except Exception:
             pass
 
